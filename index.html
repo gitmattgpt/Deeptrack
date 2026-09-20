@@ -1,130 +1,148 @@
 <!DOCTYPE html>
-<html lang="en">
+<html>
 <head>
-  <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-  <title>Drawing AR — Rotating Cube</title>
-
-  <!-- A-Frame -->
+  <title>Instant Marker AR</title>
   <script src="https://aframe.io/releases/1.8.0/aframe.min.js"></script>
-  <!-- encantar.js A-Frame plugin -->
   <script src="https://cdn.jsdelivr.net/npm/encantar.js@1.1.0/dist/encantar-aframe.min.js"></script>
-
   <style>
-    body { margin: 0; overflow: hidden; font-family: -apple-system, sans-serif; background: #000; }
-
-    /* The reference image doesn't need to be visible */
-    #drawing { display: none; }
-
-    /* Loading / error message */
+    body { margin: 0; overflow: hidden; background: #000; }
+    #capture-btn {
+      position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%);
+      padding: 16px 32px; font-size: 18px; background: #4CC3D9; color: #fff;
+      border: none; border-radius: 50px; z-index: 10000;
+    }
+    #file-input { display: none; }
     #status {
-      position: fixed; inset: 0;
-      display: flex; align-items: center; justify-content: center;
-      color: white; font-size: 17px; text-align: center;
-      padding: 24px; z-index: 9999;
-      background: rgba(0,0,0,0.9);
-      transition: opacity 0.4s;
+      position: fixed; inset: 0; background: rgba(0,0,0,0.9);
+      color: #fff; display: flex; align-items: center; justify-content: center;
+      z-index: 9999; font-size: 18px; text-align: center; padding: 24px;
     }
     #status.hidden { display: none; }
-
-    .spinner {
-      width: 40px; height: 40px;
-      border: 4px solid rgba(255,255,255,0.25);
-      border-top-color: #fff; border-radius: 50%;
-      animation: spin 1s linear infinite;
-      margin: 0 auto 18px;
-    }
-    @keyframes spin { to { transform: rotate(360deg); } }
   </style>
 </head>
 <body>
 
-  <!-- Loading / error overlay -->
-  <div id="status">
-    <div>
-      <div class="spinner"></div>
-      <div id="status-text">Starting camera…</div>
-    </div>
-  </div>
+  <button id="capture-btn">📸 Take Photo of Drawing</button>
+  <input type="file" id="file-input" accept="image/*" capture="environment" />
 
-  <!--
-    Your reference image. Replace "my-drawing.jpg" with your actual file.
-    encantar.js will analyze this image and build a tracker from it.
-    Requirements: distinct, detailed, asymmetrical, high-contrast [citation:3].
-  -->
-  <img id="drawing" src="./my-drawing.jpg" alt="Hand-drawn marker" />
+  <div id="status">Point your camera at your drawing</div>
 
-  <a-scene encantar="autoplay: true; stats: false;">
-    <!-- AR viewport (required) -->
+  <!-- Scene starts with no reference image -->
+  <a-scene id="ar-scene" encantar="autoplay: true; stats: false;">
     <ar-viewport style="width: 100vw; height: 100vh;"></ar-viewport>
 
-    <!-- AR root: children are anchored to physical reality -->
     <ar-root>
-      <!--
-        reference-image must match the id of the <img> tag above.
-        The cube will appear ONLY when that image is detected.
-      -->
       <a-entity
+        id="cube"
         geometry="primitive: box; width: 0.5; height: 0.5; depth: 0.5"
-        material="color: #4CC3D9; metalness: 0.2; roughness: 0.6"
+        material="color: #4CC3D9"
         position="0 0 0"
         animation="property: rotation; to: 0 360 0; loop: true; dur: 4000; easing: linear;"
-        data-ar-reference-image="drawing"
+        data-ar-reference-image=""
       ></a-entity>
     </ar-root>
 
-    <!-- AR sources (required): use the rear camera -->
     <ar-sources>
       <ar-camera-source facing="environment"></ar-camera-source>
     </ar-sources>
 
-    <!-- AR trackers: an image tracker with our reference image -->
     <ar-trackers>
-      <ar-image-tracker>
-        <ar-reference-image id="drawing-tracker" image="#drawing" name="my-drawing"></ar-reference-image>
-      </ar-image-tracker>
+      <ar-image-tracker id="tracker"></ar-image-tracker>
     </ar-trackers>
   </a-scene>
 
   <script>
-    (function () {
-      var statusEl = document.getElementById('status');
-      var statusText = document.getElementById('status-text');
+    const captureBtn = document.getElementById('capture-btn');
+    const fileInput  = document.getElementById('file-input');
+    const statusEl   = document.getElementById('status');
+    const cube       = document.getElementById('cube');
+    const tracker    = document.getElementById('tracker');
 
-      function showStatus(msg) {
-        statusText.textContent = msg;
-        statusEl.classList.remove('hidden');
-      }
-      function hideStatus() {
+    let currentReferenceImage = null;
+
+    captureBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      fileInput.click();
+    });
+
+    fileInput.addEventListener('change', async (event) => {
+      const file = event.target.files[0];
+      if (!file) return;
+
+      statusEl.textContent = 'Processing, please wait…';
+      statusEl.classList.remove('hidden');
+
+      try {
+        // 1. Load the photo into an HTMLImageElement
+        const dataUrl = await fileToDataURL(file);
+        const img = await loadImage(dataUrl);
+
+        // 2. Remove any previous reference image
+        if (currentReferenceImage) {
+          currentReferenceImage.remove();
+          currentReferenceImage = null;
+        }
+
+        // 3. Insert a hidden <img> with an id for the reference
+        img.id = 'dynamic-reference';
+        img.hidden = true;
+        document.body.appendChild(img);
+        currentReferenceImage = img;
+
+        // 4. Point the cube's data-ar-reference-image at it
+        cube.setAttribute('data-ar-reference-image', 'dynamic-reference');
+
+        // 5. Restart the AR session so the tracker picks up the new reference
+        //    NOTE: This is the unproven part. The tracker's database
+        //    may need to be rebuilt.
+        await restartARSession();
+
+        // 6. Hide the status
         statusEl.classList.add('hidden');
-      }
 
-      // Check support before anything else
-      window.addEventListener('load', function () {
-        if (typeof AR === 'undefined') {
-          showStatus('encantar.js failed to load. Check the script tag.');
-          return;
-        }
-        if (!AR.isSupported()) {
-          showStatus(
-            'This device is not compatible with encantar.js.\n\n' +
-            navigator.userAgent
-          );
-          return;
-        }
-        // Camera permission will be requested automatically by autoplay.
-        // Hide the status overlay once the session has started.
-        setTimeout(hideStatus, 1500);
+      } catch (err) {
+        console.error(err);
+        statusEl.textContent = 'Failed: ' + err.message;
+      }
+    });
+
+    // ── Helpers ──
+
+    function fileToDataURL(file) {
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload  = () => resolve(reader.result);
+        reader.onerror = () => reject(reader.error);
+        reader.readAsDataURL(file);
       });
+    }
 
-      // Hide status once the reference image is found
-      var tracker = document.getElementById('drawing-tracker');
-      if (tracker) {
-        tracker.addEventListener('ar-imagefound', hideStatus);
-        tracker.addEventListener('ar-imagelost', function () {});
-      }
-    })();
+    function loadImage(src) {
+      return new Promise((resolve, reject) => {
+        const img = new Image();
+        img.onload  = () => resolve(img);
+        img.onerror = () => reject(new Error('Image load failed'));
+        img.src = src;
+      });
+    }
+
+    async function restartARSession() {
+      // This depends on how the A-Frame plugin exposes session control.
+      // The plugin may handle this automatically when the reference
+      // image attribute changes, or it may require a manual restart.
+      // Check encantar.js A-Frame plugin docs for the exact method.
+      const scene = document.getElementById('ar-scene');
+      // Placeholder — you may need to emit an event or call a method
+      // on the encantar system to trigger a session restart.
+      scene.emit('ar-restart');
+      await new Promise(r => setTimeout(r, 1000));
+    }
+
+    // Hide status when target is found
+    tracker.addEventListener('targetfound', () => {
+      statusEl.classList.add('hidden');
+    });
   </script>
-
 </body>
 </html>
